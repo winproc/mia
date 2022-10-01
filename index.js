@@ -6,8 +6,17 @@ const TOKEN = process.env['token']
 const server = express()
 const client = new discord.Client({ intents: [discord.GatewayIntentBits.Guilds] });
 
+function redReply(authorname, title, message) {
+  return new discord.EmbedBuilder()
+    .setColor(0xFF0000)
+    .setAuthor({name: authorname})
+    .setTitle(title)
+    .setDescription(message)
+    .setThumbnail("https://i.ibb.co/qjbWJN7/MVD-Ministry-of-Internal-Affairs-Logo.png")
+}
+
 function validateUserFromInteraction(interaction) {
-  if (interaction.user.id == "716656214280241402") {
+  if ((interaction.user.id == "716656214280241402") || (interaction.user.id == "514842671832104960") || (interaction.user.id == "484958522556153878") || (interaction.user.id == "1001152718599094292")) {
     return true
   } else {
     return false
@@ -50,7 +59,7 @@ function removeMedalLog(name) {
       console.log(err)
       return "Something went wrong while updating the database!"
     }
-    return "Successfully removed the medal!"
+    return "Medal was successfully removed!"
   } else {
     return "Unable to find the medal in the log."
   }
@@ -61,7 +70,7 @@ function getMedalsForUser(username) {
     var content = fs.readFileSync("playermedals.json", "utf-8")
     var parsedContent = JSON.parse(content)
     if (!(username in parsedContent)) {
-      return "No such user named " + username
+      return "No medals found for user named " + username + "!"
     } else {
       return parsedContent[username]
     }
@@ -85,7 +94,7 @@ function viewMedalsHandler(func) {
   if (typeof(func) == "string") {
     return func
   } else {
-    return func.join()
+    return func.join('\n• ')
   }
 }
 
@@ -102,16 +111,36 @@ function addMedalToUser(username, medalname) {
 
     try {
       fs.writeFileSync("playermedals.json", JSON.stringify(medals))
+      return "Successfully added the medal to the player!"
     } catch (err) {
       console.log(err)
       return "Failure while saving the medal to the database!"
     }
-    return "Successfully added a medal to the user!"
+    
+  } else {
+    return "No such medal named " + medalname + " was found in the database!"
   }
 }
 
-function removeMedalOfUser(username) {
-  
+function removeMedalOfUser(username, medalname) {
+  var medals = getPlayerMedalLog()
+  if (username in medals) {
+    var found = medals[username].indexOf(medalname)
+    if (found > -1) {
+      medals[username].splice(found, 1)
+      try {
+        fs.writeFileSync("playermedals.json", JSON.stringify(medals))
+        return "Successfully removed the medal of the user!"
+      } catch (err) {
+        console.log(err)
+        return "Something went wrong while updating database!"
+      }
+    } else {
+      return "The user does not have such a medal!"
+    }
+  } else {
+    return "The user does not have any medals!"
+  }
 }
 
 server.get('/', function (req, res) {
@@ -138,7 +167,11 @@ const commands = [
   
   new discord.SlashCommandBuilder()
   .setName("view-medals")
-  .setDescription("View all your medals"),
+  .setDescription("View all your medals")
+  .addUserOption(option => 
+    option.setName("player")
+    .setDescription("Name of the player you want to query")
+    .setRequired(false)),
   
   new discord.SlashCommandBuilder()
   .setName("add-medal")
@@ -150,7 +183,23 @@ const commands = [
   .addStringOption(option => 
     option.setName("medal")
     .setDescription("Name of the medal")
+    .setAutocomplete(true)
+    .setRequired(true)),
+  new discord.SlashCommandBuilder()
+  .setName("remove-medal")
+  .setDescription("Remove the medal of a player")
+  .addUserOption(option => 
+    option.setName("player")
+    .setDescription("The player you want to remove the medal of")
     .setRequired(true))
+  .addStringOption(option => 
+    option.setName("medal")
+    .setDescription("Name of the medal to remove")
+    .setAutocomplete(true)
+    .setRequired(true)),
+  new discord.SlashCommandBuilder()
+  .setName("medal-list")
+  .setDescription("Get the list of created medals")
 
 ].map(command => command.toJSON())
 
@@ -162,11 +211,22 @@ const rest = new discord.REST({ version: '10' }).setToken(TOKEN);
 rest.put(discord.Routes.applicationCommands("1023166888664109097"), {body: commands})
 
 client.on("interactionCreate", async interaction => {
+
+  if (interaction.isAutocomplete()) {
+    if ((interaction.commandName == "add-medal") || (interaction.commandName == "remove-medal")) {
+      var choices = getMedalLog()
+      var filteredChoices = choices.filter(choice => choice.startsWith(interaction.options.getFocused()))
+      await interaction.respond(
+        filteredChoices.map(choice => ({ name: choice, value: choice }))
+      )
+    }
+  }
+  
   if (!interaction.isChatInputCommand()) return;
   if (interaction.commandName == "create-medal") {
     if (validateUserFromInteraction(interaction)) {
       if (addMedalLog(interaction.options.getString("name"))) {
-        await interaction.reply("Saved medal!")
+        await interaction.reply({embeds: [redReply("Ministry of Internal Affairs", "Medal System | Create Medal","Medal was successfully created!")]})
       } else {
         await interaction.reply("Something went wrong while updating the database!")
       }
@@ -174,18 +234,40 @@ client.on("interactionCreate", async interaction => {
     }
   } else if (interaction.commandName == "delete-medal") {
     if (validateUserFromInteraction(interaction)) {
-      await interaction.reply(removeMedalLog(interaction.options.getString("name")))
+      await interaction.reply({embeds: [redReply("Ministry of Internal Affairs", "Medal System | Delete Medal",removeMedalLog(interaction.options.getString("name")))]})
     }
   } else if (interaction.commandName == "view-medals") {
-    await interaction.reply(viewMedalsHandler(getMedalsForUser(interaction.user.username)))
+    
+    var user = interaction.options.getUser("player") || interaction.user
+    var maincontent = `${user} has the following medals:\n\n• `
+    var content = viewMedalsHandler(getMedalsForUser(user.username))
+    
+    if (content == "") {
+      maincontent = "No medals found!"
+    } else {
+      maincontent += content
+    }
+    await interaction.reply({embeds: [redReply("Ministry of Internal Affairs", "Medal System | View Medals", maincontent)]})
   } else if (interaction.commandName == "add-medal") {
-    await interaction.reply(addMedalToUser(interaction.options.getUser("player").username,interaction.options.getString("medal")))
+    await interaction.reply({ embeds: [redReply("Ministry of Internal Affairs", "Medal System | Add Medal", addMedalToUser(interaction.options.getUser("player").username,interaction.options.getString("medal")))]})
+    
+  } else if (interaction.commandName == "remove-medal") {
+    await interaction.reply({ embeds: [redReply("Ministry of Internal Affairs", "Medal System | Remove Medal", removeMedalOfUser(interaction.options.getUser("player").username,interaction.options.getString("medal")))]})
+  } else if (interaction.commandName == "medal-list") {
+    var medal_list_json = getMedalLog()
+    await interaction.reply({embeds: [redReply("Ministry of Internal Affairs", "Medal System | Medal List", viewMedalsHandler(medal_list_json))]})
   }
           
 })
 
-try {
-  client.login(TOKEN)
-} catch(err) {
-  throw err
+client.on('debug', console.log)
+
+async function login() {
+  
+  await client.login(TOKEN)
+  console.log("done")
 }
+
+login()
+
+server.listen(8080)
